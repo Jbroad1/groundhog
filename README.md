@@ -1,6 +1,6 @@
 # groundhog
 
-**You already know how to get great work out of Claude Code. groundhog turns the things you do over and over — the weekly market brief, the competitor scan, the recurring report — into one-step skills, so next time it takes a sentence instead of an hour. (It does the same for developer workflows.)**
+**Standing up a one-off automation is easy — anyone can one-shot that in Claude or Codex. The hard part is the multi-step business processes you have quietly refined across dozens of sessions: the month-end board pack, the per-client onboarding run, the competitor teardown. groundhog finds those in your own Claude Code history and turns each into a skill-chain you invoke by name — the steps, the sequence, and the judgment, captured. (Developer workflows too.)**
 
 [![Tests](https://github.com/Jbroad1/groundhog/actions/workflows/test.yml/badge.svg)](https://github.com/Jbroad1/groundhog/actions/workflows/test.yml)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
@@ -8,25 +8,30 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 ![Platforms: Linux | macOS | Windows](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)
 
-groundhog is a Claude Code skill that reads your local `~/.claude` history, finds the tasks you repeat, and turns each one into a reusable automation you can run again with a single line — or just hand back to Claude. It is built for how knowledge workers actually use Claude Code: research, analysis, reporting, drafting, operations. Developers get the same treatment for their tool workflows. Every suggestion comes with a proof-path, secrets are scrubbed before anything is written, and nothing is installed until you approve it.
+<p align="center">
+  <img src="assets/demo.svg" width="820" alt="groundhog scan output: nine ranked automation candidates mined from Claude Code history — an edit hotspot, a Grep to Read to Edit tool sequence, a recurring plan, a prompt cluster with a secret redacted inline to [REDACTED], a pytest hookify rule, and an already-automated /deploy scored 0.00">
+</p>
 
-Picture your Monday. You ask Claude to pull the week's fintech headlines, summarize the themes, and draft a client update. You did that last Monday, and the one before. groundhog spots that pattern in your history and offers to make it a `weekly-fintech-brief` skill, so next Monday it is one line instead of ten. The same thing happens if your repeat is `grep → read → edit` across a codebase.
+groundhog is a Claude Code skill that reads your local `~/.claude` history and finds the workflows you have actually built up and repeated — not throwaway prompts, but the multi-step processes you have refined over time: the research-to-report pipeline, the onboarding sequence, the review-and-summarize loop you run every week. It turns each into a reusable skill or **skill-chain** that carries your steps and your judgment, so you stop re-deriving the same process from scratch. Every suggestion cites a proof-path to the sessions it came from, secrets are scrubbed before anything is written, and nothing is installed until you approve it.
+
+Picture month-end. You pull the numbers, reconcile them against plan, write the variance commentary in your own voice, sanity-check the outliers, and drop it all into the board template — the same nine steps every month for a year, each with hard-won little rules about what to flag and how to phrase it. groundhog finds that process in your history and turns it into a `month-end-board-pack` skill-chain: one instruction, your nine steps, your format. The same goes for the `grep → read → edit` loop a developer runs across a codebase.
 
 > Named for the day you keep reliving. groundhog is how you stop redoing it.
 
-## What groundhog automates
+## What groundhog captures
 
-**For anyone doing knowledge work in Claude Code:**
-- Recurring research and market or competitor analysis ("scan this week's news in X industry and summarize the themes")
-- Weekly and monthly report drafts, status updates, and client briefs
-- Repeated data pulls, lookups, and summaries
-- Standard writing routines you run on a schedule
+"Make me an automation" is a single prompt — you do not need groundhog for that. groundhog is for the **multi-step processes you repeat and have quietly optimized** across many sessions, where the value is in the accumulated steps and judgment, not the one-liner:
 
-**And for developers:**
-- Repeated tool sequences (grep → read → edit), edit hotspots, and multi-step plans become skills and skill-chains
-- Guardrail commands you run after every change (tests, linters) become hooks
+**Business and operations**
+- **Recurring reports as a pipeline** — pull the numbers, explain the variances, draft the narrative in your voice, format it into your template. Month-end board packs, weekly investor updates, QBR decks.
+- **Per-entity workflows you run over and over** — a competitor teardown (pricing → features → positioning → brief), client onboarding (SOW → kickoff deck → project plan → risk register), an RFP answered section by section.
+- **Research to decision** — structured multi-source research collapsed into your fixed report format: market scans, due-diligence memos, vendor comparisons.
+- **Review loops** — contract or document review that pulls the key terms, flags deviations from your standard, and summarizes, the same way every time.
 
-groundhog scores each pattern, checks it against automations you already have, and recommends the kind that fits. You choose what to build.
+**Engineering**
+- Repeated tool sequences (grep → read → edit), edit hotspots, and multi-step plans become skills and skill-chains; guardrail commands (tests, linters) become hooks.
+
+Each becomes a **skill-chain** (the multi-step ones) or a **skill** you invoke by name — carrying the steps and judgment you would otherwise re-explain every time. groundhog scores each candidate, dedups it against what you already have, and you decide what to build.
 
 ## See it work
 
@@ -51,7 +56,7 @@ python scripts/groundhog.py scan --config-dir assets/fixtures/sample-config --si
     [   0.00] skill        prompt-cluster     Recurring slash command: /deploy
 ```
 
-This sample is a coding project, so most of its candidates are developer patterns. The row that matters for everyone is the `prompt-cluster`: **a recurring request that becomes a skill.** That is the exact mechanism that turns your weekly market brief into a one-line skill. Note two other touches: the secret in the deploy prompt is redacted inline to `[RED…`, and the `/deploy` command scores `0.00` because you already automated it — groundhog will not tell you to build it twice.
+This sample is a coding project, so most candidates are developer patterns — but look at the `skill-chain` row (`plan-type`): that is a **recurring multi-step process**, the kind groundhog turns into a chain you invoke once, exactly like a month-end board pack or an onboarding run. The `prompt-cluster` rows are the single-step version. Two other touches: the secret in the deploy prompt is redacted inline to `[RED…`, and `/deploy` scores `0.00` because you already automated it — groundhog will not tell you to build it twice.
 
 ## Getting started
 
@@ -119,7 +124,7 @@ groundhog is a Claude Code skill that reads your local `~/.claude` history, find
 No. If you use Claude Code for research, writing, analysis, or operations, groundhog finds the requests you repeat and turns them into one-step skills. You do need Claude Code installed, and you talk to it in plain English.
 
 **What kinds of tasks can groundhog automate?**
-Recurring research, market and competitor scans, weekly report drafts, data pulls, and standard writing routines. For developers it also covers repeated tool sequences, edit hotspots, multi-step plans, and test or lint guardrails.
+Multi-step business processes you repeat: month-end reporting pipelines, competitor teardowns, client onboarding runs, RFP responses, research-to-report workflows, and recurring document review. For developers it also covers repeated tool sequences, edit hotspots, multi-step plans, and test or lint guardrails.
 
 **How is groundhog different from continuous-learning tools?**
 Most tools learn forward from new sessions only. groundhog works retroactively: it mines the history you have already built up, so it has useful suggestions on the first run instead of after weeks of fresh data.
