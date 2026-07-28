@@ -111,14 +111,21 @@ def cmd_package(args) -> int:
 def _safe_rel(rel: str) -> Path:
     """Reject absolute, drive/rooted, and parent-escaping artifact file keys.
 
-    A drive-less *rooted* path like ``/etc/x`` or ``\\Windows\\x`` is NOT absolute
-    on Windows (it has no drive) yet ``dest / that`` resolves to the drive root and
-    escapes the skill dir, so we reject ``drive``/``root`` explicitly as well.
+    Keys are mined or LLM-authored and untrusted, and may use POSIX ('/') or
+    Windows ('\\') separators. Both are treated as separators on every OS: on
+    POSIX, ``Path('..\\evil')`` is a single filename, so relying on host Path
+    semantics would let a Windows-style traversal slip through. A drive-less
+    *rooted* path ('/etc/x', '\\Windows\\x') is not "absolute" on Windows yet still
+    escapes to the root, so a leading separator and a drive letter are rejected
+    explicitly too.
     """
-    p = Path(rel)
-    if p.is_absolute() or p.drive or p.root or ".." in p.parts:
+    norm = rel.replace("\\", "/")
+    if (norm.startswith("/")                        # rooted (either separator)
+            or ".." in norm.split("/")              # parent escape
+            or (len(norm) >= 2 and norm[1] == ":")  # drive letter, e.g. C:/x
+            or Path(rel).is_absolute()):            # any host-absolute form
         raise ValueError(f"unsafe artifact path: {rel}")
-    return p
+    return Path(norm)
 
 
 def _safe_project_base(project: str | None, cfg: Path, allowed_roots: list[Path]) -> Path:
