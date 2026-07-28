@@ -12,7 +12,7 @@
   <img src="assets/demo.svg" width="820" alt="groundhog scan results: multi-step business processes found in your Claude Code history — a month-end board pack, a competitor teardown, and client onboarding as skill-chains, a weekly investor update as a skill, and a developer code-change loop, each with how often you run it">
 </p>
 
-groundhog is a Claude Code skill that reads your local `~/.claude` history and finds the workflows you have actually built up and repeated — not throwaway prompts, but the multi-step processes you have refined over time: the research-to-report pipeline, the onboarding sequence, the review-and-summarize loop you run every week. It turns each into a reusable skill or **skill-chain** that carries your steps and your judgment, so you stop re-deriving the same process from scratch. Every suggestion cites a proof-path to the sessions it came from, secrets are scrubbed before anything is written, and nothing is installed until you approve it.
+groundhog is a Claude Code skill that reads your local `~/.claude` history and finds the workflows you have actually built up and repeated — not throwaway prompts, but the multi-step processes you have refined over time: the research-to-report pipeline, the onboarding sequence, the review-and-summarize loop you run every week. It turns each into a reusable skill or **skill-chain** that preserves your steps and your judgment, so you stop re-deriving the same process from scratch. Every suggestion cites a proof-path to the sessions it came from, secrets are scrubbed before anything is written, and nothing is installed until you approve it.
 
 Picture month-end. You pull the numbers, reconcile them against plan, write the variance commentary in your own voice, sanity-check the outliers, and drop it all into the board template — the same nine steps every month for a year, each with hard-won little rules about what to flag and how to phrase it. groundhog finds that process in your history and turns it into a `month-end-board-pack` skill-chain: one instruction, your nine steps, your format. The same goes for the `grep → read → edit` loop a developer runs across a codebase.
 
@@ -56,7 +56,7 @@ python scripts/groundhog.py scan --config-dir assets/fixtures/sample-config --si
     [   0.00] skill        prompt-cluster     Recurring slash command: /deploy
 ```
 
-This sample is a coding project, so most candidates are developer patterns — but look at the `skill-chain` row (`plan-type`): that is a **recurring multi-step process**, the kind groundhog turns into a chain you invoke once, exactly like a month-end board pack or an onboarding run. The `prompt-cluster` rows are the single-step version. Two other touches: the secret in the deploy prompt is redacted inline to `[RED…`, and `/deploy` scores `0.00` because you already automated it — groundhog will not tell you to build it twice.
+This sample is a coding project, so most candidates are developer patterns — but look at the `skill-chain` row (`plan-type`): that is a **recurring multi-step process**, the kind groundhog turns into a chain you invoke once, exactly like a month-end board pack or an onboarding run. The `prompt-cluster` rows are the single-step version. Two other touches: the secret in the deploy prompt is redacted inline to `[RED…`, and `/deploy` scores `0.00` because you already automated it — you won't see it again.
 
 ## Getting started
 
