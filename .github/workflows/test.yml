@@ -1,0 +1,33 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / py${{ matrix.python }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.9", "3.11", "3.13", "3.14"]
+        include:
+          # Pin the 3.8 support floor on a runner image that still ships it.
+          - os: ubuntu-22.04
+            python: "3.8"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      # No dependencies to install: groundhog is pure standard library.
+      - name: Run test suite
+        run: python -m unittest discover -s tests -v
+      - name: Byte-compile smoke check (syntax; zero deps)
+        run: python -m compileall scripts tests evals
+      - name: Run deterministic eval gate
+        run: python evals/run_evals.py
+      - name: Validate our own SKILL.md
+        run: python scripts/validate_skill.py .

@@ -1,0 +1,2 @@
+{"type": "assistant", "uuid": "seqB8-b", "parentUuid": null, "sessionId": "seqB8", "timestamp": "2026-07-20T10:00:00.000Z", "cwd": "C:/work/proj-a", "gitBranch": "main", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "b", "name": "Bash", "input": {"command": "pytest tests/ -q"}}]}}
+{"type": "user", "sessionId": "seqB8", "timestamp": "2026-07-20T10:00:00.000Z", "cwd": "C:/work/proj-a", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "b", "content": "passed"}]}}

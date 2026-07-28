@@ -1,0 +1,72 @@
+{
+  "skill": "groundhog",
+  "notes": "The grader is the spec. Deterministic (code-graded) evals run via `python evals/run_evals.py` and are gated in CI by the unittest suite. Model-graded evals — trigger discovery (t*) and proposal quality (a9) — need a judge with the SAME context the system sees, must reason before scoring, use a confidence threshold, and run over multiple trials at iteration time (report the distribution, not just a mean). They are NOT part of the dependency-free CI gate.",
+  "trigger_evals": [
+    {"id": "t1", "prompt": "Look at my ~/.claude history and turn my repeated workflows into skills and hooks.", "should_trigger": true, "why": "primary use case"},
+    {"id": "t2", "prompt": "What do I keep doing over and over in Claude Code? Automate it.", "should_trigger": true, "why": "retroactive mining intent"},
+    {"id": "t3", "prompt": "Mine my session transcripts for patterns I could turn into a skill.", "should_trigger": true, "why": "explicit transcript mining"},
+    {"id": "t4", "prompt": "Build me a skill for reviewing PRs.", "should_trigger": false, "why": "authoring one specific skill from scratch — that is writing-skills/skill-creator, not retroactive mining"},
+    {"id": "t5", "prompt": "Write a hook that blocks force-push.", "should_trigger": false, "why": "single known hook, no mining of history needed"},
+    {"id": "t6", "prompt": "Summarize what I did yesterday in Claude.", "should_trigger": false, "why": "history summary, not workflow→automation compilation"},
+    {"id": "t7", "prompt": "Clean up my ~/.claude directory.", "should_trigger": false, "why": "maintenance, unrelated"}
+  ],
+  "trigger_grader": {
+    "type": "model",
+    "method": "Present the skill's `description` (the exact text injected into the system prompt — the body is NOT visible at trigger time) plus the prompt to a fresh classifier that must REASON before deciding, then assert its load decision equals should_trigger.",
+    "trials": ">=5 per case",
+    "report": "pass@k per case WITH the full distribution — not just a mean; hard negatives t4–t7 must NOT trigger on any trial",
+    "pass_threshold": "7/7 cases correct at the chosen k",
+    "confidence": 0.7,
+    "when": "iteration time (needs a judge); not the dependency-free CI unit gate"
+  },
+  "application_evals": [
+    {"id": "a1", "name": "Deterministic scan on fixtures",
+     "command": "python -m unittest test_engine",
+     "grader": "code", "pass_if": "exit 0", "in_runner": true,
+     "checks": ["known sequence detected", "secret scrubbed", "error→fix paired", "loop detected", "deterministic ordering", "incremental cache", "cache schema-version invalidation"]},
+    {"id": "a2", "name": "Emitted skills pass frontmatter validation",
+     "command": "python -m unittest test_tools.ValidateSkillTests",
+     "grader": "code", "pass_if": "exit 0", "in_runner": true,
+     "also_enforced_at": "install — groundhog._install_skill re-validates every emitted skill (covered by test_cli install path)"},
+    {"id": "a3", "name": "Emitted hooks / hookify rules pass schema validation",
+     "command": "python -m unittest test_tools.ValidateHookTests test_tools.ValidateHookifyTests",
+     "grader": "code", "pass_if": "exit 0", "in_runner": true,
+     "also_enforced_at": "install — _install_hookify validates the rule and _install_hook validates the settings patch before merge"},
+    {"id": "a4", "name": "No secrets in scan.json (planted-token + scrubber hard cases)",
+     "command": "python -m unittest test_engine.EngineTests.test_secret_scrubbed_everywhere test_engine.ScrubTests",
+     "grader": "code", "pass_if": "exit 0", "in_runner": true},
+    {"id": "a5", "name": "Managed-hooks policy forces hookify fallback + refuses inert hook",
+     "command": "python -m unittest test_engine.EngineTests.test_bash_guardrail_and_managed_policy test_cli.CliTests.test_install_yes_writes_and_respects_managed_policy",
+     "grader": "code", "pass_if": "exit 0", "in_runner": true},
+    {"id": "a6", "name": "Review-by-default: install writes nothing without --yes",
+     "command": "python -m unittest test_cli.CliTests.test_install_preview_writes_nothing test_cli.CliTests.test_dry_run_overrides_yes",
+     "grader": "code", "pass_if": "exit 0", "in_runner": true},
+    {"id": "a7", "name": "Write-path confinement (traversal / rooted / project-escape)",
+     "command": "python -m unittest test_cli.PathConfinementTests",
+     "grader": "code", "pass_if": "exit 0", "in_runner": true},
+    {"id": "a8", "name": "Standalone: no third-party imports in scripts/",
+     "command": "python evals/run_evals.py  # portable AST check (replaces a non-cross-platform grep)",
+     "grader": "code", "pass_if": "no third-party imports found", "in_runner": true},
+    {"id": "a9", "name": "Real-data read-only smoke produces valid proof paths",
+     "command": "python scripts/groundhog.py scan --since 30d",
+     "grader": "code", "pass_if": "scan.json written; every candidate has >=1 proof_path whose file exists; no writes under skills/",
+     "when": "manual / local (needs a real ~/.claude); not in the CI gate"},
+    {"id": "a10", "name": "Proposal quality (analyzer verdict)",
+     "grader": "model",
+     "rubric": "Given scan.json + the emitted verdict.json, score 1-5: (a) are proposals genuinely repeated workflows, not exploration noise? (b) is each primitive choice defensible per primitive-selection.md? (c) does every proposal carry a real proof path? (d) are already-automated candidates dropped? Judge must reason before scoring.",
+     "trials": ">=5 analyzer runs on the fixture scan.json",
+     "report": "mean + full distribution (no mean without a distribution); pass at mean>=4 AND no run below 3",
+     "confidence": 0.7,
+     "context_required": ["scan.json", "verdict.json", "references/primitive-selection.md"],
+     "when": "iteration time (needs a judge + a generated verdict.json); not the CI unit gate"}
+  ],
+  "deterministic_gate": {
+    "runner": "python evals/run_evals.py",
+    "note": "Runs every application eval marked in_runner (a1–a8) and reports a pass/fail table. Exit 0 == gate green. The unittest suite in CI covers the same checks."
+  },
+  "red_green_gate": {
+    "scenario": "Look at my ~/.claude history and turn my repeated workflows into skills/hooks.",
+    "red": "A fresh agent WITHOUT groundhog (see references/red-baseline.md).",
+    "green": "The same scenario WITH groundhog succeeds end-to-end: bounded scan, ranked deduped proposals with proof paths, valid emitted artifacts, secrets scrubbed (best-effort), managed-hook policy respected, no writes without approval."
+  }
+}

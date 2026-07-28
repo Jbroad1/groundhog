@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# groundhog build/runtime artifacts
+*.zip
+last-run/
+cache.json
+manifest.json
+# analysis outputs may hold mined (best-effort-scrubbed) session data — never commit
+scan.json
+verdict.json
+plan.json
+env.json
+
+# hookify local rules (never commit machine-local rules)
+.claude/*.local.md
+
+# OS junk
+.DS_Store
+Thumbs.db
