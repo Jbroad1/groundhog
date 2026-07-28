@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="352" viewBox="0 0 900 352" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14.5">
+  <rect x="1" y="1" width="898" height="350" rx="10" fill="#0d1117" stroke="#30363d"/>
+  <rect x="1" y="1" width="898" height="40" rx="10" fill="#161b22"/>
+  <rect x="1" y="30" width="898" height="11" fill="#161b22"/>
+  <circle cx="26" cy="21" r="6" fill="#ff5f56"/>
+  <circle cx="46" cy="21" r="6" fill="#ffbd2e"/>
+  <circle cx="66" cy="21" r="6" fill="#27c93f"/>
+  <text x="450" y="26" text-anchor="middle" fill="#6e7681" font-size="12.5">groundhog — scan</text>
+
+  <text x="24" y="76" xml:space="preserve"><tspan fill="#7ee787">$ </tspan><tspan fill="#c9d1d9">python scripts/groundhog.py scan --config-dir sample-config --since all</tspan></text>
+  <text x="24" y="106" xml:space="preserve" fill="#8b949e">9 candidates. Top matches:</text>
+
+  <text x="24" y="140" xml:space="preserve"><tspan fill="#79c0ff">  9.60  </tspan><tspan fill="#d2a8ff">skill         </tspan><tspan fill="#a5d6ff">edit-hotspot     </tspan><tspan fill="#c9d1d9">Edit hotspot: src/app.py</tspan></text>
+  <text x="24" y="166" xml:space="preserve"><tspan fill="#79c0ff">  5.60  </tspan><tspan fill="#d2a8ff">skill         </tspan><tspan fill="#a5d6ff">tool-sequence    </tspan><tspan fill="#c9d1d9">Grep &#8594; Read &#8594; Edit</tspan></text>
+  <text x="24" y="192" xml:space="preserve"><tspan fill="#79c0ff">  4.50  </tspan><tspan fill="#d2a8ff">skill-chain   </tspan><tspan fill="#a5d6ff">plan-type        </tspan><tspan fill="#c9d1d9">Recurring plan: refactor the auth module</tspan></text>
+  <text x="24" y="218" xml:space="preserve"><tspan fill="#79c0ff">  3.25  </tspan><tspan fill="#d2a8ff">skill         </tspan><tspan fill="#a5d6ff">prompt-cluster   </tspan><tspan fill="#c9d1d9">Recurring request: deploy &#8230; token=</tspan><tspan fill="#ff7b72">[REDACTED]</tspan></text>
+  <text x="24" y="244" xml:space="preserve"><tspan fill="#79c0ff">  3.20  </tspan><tspan fill="#d2a8ff">hookify-rule  </tspan><tspan fill="#a5d6ff">bash-template    </tspan><tspan fill="#c9d1d9">pytest tests/ -q   </tspan><tspan fill="#e3b341">&#9888; managed-hook warning</tspan></text>
+  <text x="24" y="270" xml:space="preserve"><tspan fill="#79c0ff">  0.00  </tspan><tspan fill="#d2a8ff">skill         </tspan><tspan fill="#a5d6ff">prompt-cluster   </tspan><tspan fill="#6e7681">/deploy   </tspan><tspan fill="#7ee787">&#10003; already automated &#8212; skipped</tspan></text>
+
+  <text x="24" y="312" xml:space="preserve"><tspan fill="#8b949e">every candidate carries a </tspan><tspan fill="#c9d1d9">proof-path</tspan><tspan fill="#8b949e"> (file &#183; line &#183; session) &#183; secrets scrubbed &#183; nothing installed without approval</tspan></text>
+</svg>

@@ -8,6 +8,10 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 ![Platforms: Linux | macOS | Windows](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)
 
+<p align="center">
+  <img src="assets/demo.svg" width="820" alt="groundhog scan output: nine ranked automation candidates mined from Claude Code history — an edit hotspot, a Grep to Read to Edit tool sequence, a recurring plan, a prompt cluster with a secret redacted inline to [REDACTED], a pytest hookify rule, and an already-automated /deploy scored 0.00">
+</p>
+
 groundhog is a Claude Code skill that reads your local `~/.claude` history, finds the tasks you repeat, and turns each one into a reusable automation you can run again with a single line — or just hand back to Claude. It is built for how knowledge workers actually use Claude Code: research, analysis, reporting, drafting, operations. Developers get the same treatment for their tool workflows. Every suggestion comes with a proof-path, secrets are scrubbed before anything is written, and nothing is installed until you approve it.
 
 Picture your Monday. You ask Claude to pull the week's fintech headlines, summarize the themes, and draft a client update. You did that last Monday, and the one before. groundhog spots that pattern in your history and offers to make it a `weekly-fintech-brief` skill, so next Monday it is one line instead of ten. The same thing happens if your repeat is `grep → read → edit` across a codebase.
