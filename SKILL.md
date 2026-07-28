@@ -1,6 +1,6 @@
 ---
 name: groundhog
-description: Use when a user wants to turn tasks they repeat with Claude Code — recurring market or competitor research, weekly reports, data pulls, drafting routines, and developer workflows too — into skills, hooks, or skill-chains by mining their local ~/.claude history, or to retroactively build automations from past sessions. Not for authoring a single known skill or hook from scratch.
+description: Use when a user wants to turn multi-step processes they repeat with Claude Code — month-end reporting, competitor teardowns, client onboarding, RFP responses, research-to-report workflows, and developer workflows too — into skills, hooks, or skill-chains by mining their local ~/.claude history, or to retroactively build automations from past sessions. Not for authoring a single known skill or hook from scratch.
 license: MIT
 metadata:
   author: Joshua Broad

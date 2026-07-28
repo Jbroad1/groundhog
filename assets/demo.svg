@@ -1,21 +1,44 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="900" height="352" viewBox="0 0 900 352" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14.5">
-  <rect x="1" y="1" width="898" height="350" rx="10" fill="#0d1117" stroke="#30363d"/>
-  <rect x="1" y="1" width="898" height="40" rx="10" fill="#161b22"/>
-  <rect x="1" y="30" width="898" height="11" fill="#161b22"/>
-  <circle cx="26" cy="21" r="6" fill="#ff5f56"/>
-  <circle cx="46" cy="21" r="6" fill="#ffbd2e"/>
-  <circle cx="66" cy="21" r="6" fill="#27c93f"/>
-  <text x="450" y="26" text-anchor="middle" fill="#6e7681" font-size="12.5">groundhog — scan</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="416" viewBox="0 0 900 416" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <rect x="1" y="1" width="898" height="414" rx="16" fill="#0f1117" stroke="#262b33"/>
 
-  <text x="24" y="76" xml:space="preserve"><tspan fill="#7ee787">$ </tspan><tspan fill="#c9d1d9">python scripts/groundhog.py scan --config-dir sample-config --since all</tspan></text>
-  <text x="24" y="106" xml:space="preserve" fill="#8b949e">9 candidates. Top matches:</text>
+  <text x="30" y="43" font-size="19" font-weight="700" fill="#e6edf3">groundhog<tspan font-weight="400" fill="#7d8590" font-size="14">   &#183;  processes it found in your Claude Code history</tspan></text>
+  <line x1="30" y1="63" x2="870" y2="63" stroke="#21262d"/>
 
-  <text x="24" y="140" xml:space="preserve"><tspan fill="#79c0ff">  9.60  </tspan><tspan fill="#d2a8ff">skill         </tspan><tspan fill="#a5d6ff">edit-hotspot     </tspan><tspan fill="#c9d1d9">Edit hotspot: src/app.py</tspan></text>
-  <text x="24" y="166" xml:space="preserve"><tspan fill="#79c0ff">  5.60  </tspan><tspan fill="#d2a8ff">skill         </tspan><tspan fill="#a5d6ff">tool-sequence    </tspan><tspan fill="#c9d1d9">Grep &#8594; Read &#8594; Edit</tspan></text>
-  <text x="24" y="192" xml:space="preserve"><tspan fill="#79c0ff">  4.50  </tspan><tspan fill="#d2a8ff">skill-chain   </tspan><tspan fill="#a5d6ff">plan-type        </tspan><tspan fill="#c9d1d9">Recurring plan: refactor the auth module</tspan></text>
-  <text x="24" y="218" xml:space="preserve"><tspan fill="#79c0ff">  3.25  </tspan><tspan fill="#d2a8ff">skill         </tspan><tspan fill="#a5d6ff">prompt-cluster   </tspan><tspan fill="#c9d1d9">Recurring request: deploy &#8230; token=</tspan><tspan fill="#ff7b72">[REDACTED]</tspan></text>
-  <text x="24" y="244" xml:space="preserve"><tspan fill="#79c0ff">  3.20  </tspan><tspan fill="#d2a8ff">hookify-rule  </tspan><tspan fill="#a5d6ff">bash-template    </tspan><tspan fill="#c9d1d9">pytest tests/ -q   </tspan><tspan fill="#e3b341">&#9888; managed-hook warning</tspan></text>
-  <text x="24" y="270" xml:space="preserve"><tspan fill="#79c0ff">  0.00  </tspan><tspan fill="#d2a8ff">skill         </tspan><tspan fill="#a5d6ff">prompt-cluster   </tspan><tspan fill="#6e7681">/deploy   </tspan><tspan fill="#7ee787">&#10003; already automated &#8212; skipped</tspan></text>
+  <!-- Row 1 -->
+  <rect x="30" y="83" width="104" height="23" rx="11.5" fill="#241a38" stroke="#3a2b57"/>
+  <text x="82" y="99" text-anchor="middle" font-size="12" font-weight="600" fill="#d2a8ff">skill-chain</text>
+  <text x="152" y="96" font-size="15.5" font-weight="600" fill="#e6edf3">Month-end board pack</text>
+  <text x="152" y="116" font-size="12.5" fill="#8b949e">numbers &#8594; variances &#8594; narrative in your voice &#8594; board template</text>
+  <text x="870" y="101" text-anchor="end" font-size="12.5" fill="#58a6ff">12&#215; &#183; monthly</text>
 
-  <text x="24" y="312" xml:space="preserve"><tspan fill="#8b949e">every candidate carries a </tspan><tspan fill="#c9d1d9">proof-path</tspan><tspan fill="#8b949e"> (file &#183; line &#183; session) &#183; secrets scrubbed &#183; nothing installed without approval</tspan></text>
+  <!-- Row 2 -->
+  <rect x="30" y="141" width="104" height="23" rx="11.5" fill="#241a38" stroke="#3a2b57"/>
+  <text x="82" y="157" text-anchor="middle" font-size="12" font-weight="600" fill="#d2a8ff">skill-chain</text>
+  <text x="152" y="154" font-size="15.5" font-weight="600" fill="#e6edf3">Competitor teardown</text>
+  <text x="152" y="174" font-size="12.5" fill="#8b949e">pricing &#8594; features &#8594; positioning &#8594; one-page brief</text>
+  <text x="870" y="159" text-anchor="end" font-size="12.5" fill="#58a6ff">9&#215;</text>
+
+  <!-- Row 3 -->
+  <rect x="30" y="199" width="104" height="23" rx="11.5" fill="#241a38" stroke="#3a2b57"/>
+  <text x="82" y="215" text-anchor="middle" font-size="12" font-weight="600" fill="#d2a8ff">skill-chain</text>
+  <text x="152" y="212" font-size="15.5" font-weight="600" fill="#e6edf3">Client onboarding</text>
+  <text x="152" y="232" font-size="12.5" fill="#8b949e">SOW &#8594; kickoff deck &#8594; project plan &#8594; risk register</text>
+  <text x="870" y="217" text-anchor="end" font-size="12.5" fill="#58a6ff">7&#215;</text>
+
+  <!-- Row 4 -->
+  <rect x="30" y="257" width="104" height="23" rx="11.5" fill="#10243a" stroke="#1f3b5c"/>
+  <text x="82" y="273" text-anchor="middle" font-size="12" font-weight="600" fill="#79c0ff">skill</text>
+  <text x="152" y="270" font-size="15.5" font-weight="600" fill="#e6edf3">Weekly investor update</text>
+  <text x="152" y="290" font-size="12.5" fill="#8b949e">pull KPIs &#8594; write the narrative &#8594; flag the risks</text>
+  <text x="870" y="275" text-anchor="end" font-size="12.5" fill="#58a6ff">20&#215; &#183; weekly</text>
+
+  <!-- Row 5 (the one for developers) -->
+  <rect x="30" y="315" width="104" height="23" rx="11.5" fill="#10243a" stroke="#1f3b5c"/>
+  <text x="82" y="331" text-anchor="middle" font-size="12" font-weight="600" fill="#79c0ff">skill</text>
+  <text x="152" y="328" font-size="15.5" font-weight="600" fill="#e6edf3">Code-change loop <tspan font-size="12.5" font-weight="400" fill="#6e7681">&#183; for developers</tspan></text>
+  <text x="152" y="348" font-size="12.5" fill="#8b949e">grep &#8594; read &#8594; edit across the codebase</text>
+  <text x="870" y="333" text-anchor="end" font-size="12.5" fill="#58a6ff">14&#215;</text>
+
+  <line x1="30" y1="372" x2="870" y2="372" stroke="#21262d"/>
+  <text x="30" y="396" font-size="12.5" fill="#7d8590">Each links back to the sessions it came from &#183; secrets scrubbed &#183; nothing installed without your approval</text>
 </svg>

@@ -9,7 +9,7 @@
 ![Platforms: Linux | macOS | Windows](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)
 
 <p align="center">
-  <img src="assets/demo.svg" width="820" alt="groundhog scan output: nine ranked automation candidates mined from Claude Code history — an edit hotspot, a Grep to Read to Edit tool sequence, a recurring plan, a prompt cluster with a secret redacted inline to [REDACTED], a pytest hookify rule, and an already-automated /deploy scored 0.00">
+  <img src="assets/demo.svg" width="820" alt="groundhog scan results: multi-step business processes found in your Claude Code history — a month-end board pack, a competitor teardown, and client onboarding as skill-chains, a weekly investor update as a skill, and a developer code-change loop, each with how often you run it">
 </p>
 
 groundhog is a Claude Code skill that reads your local `~/.claude` history and finds the workflows you have actually built up and repeated — not throwaway prompts, but the multi-step processes you have refined over time: the research-to-report pipeline, the onboarding sequence, the review-and-summarize loop you run every week. It turns each into a reusable skill or **skill-chain** that carries your steps and your judgment, so you stop re-deriving the same process from scratch. Every suggestion cites a proof-path to the sessions it came from, secrets are scrubbed before anything is written, and nothing is installed until you approve it.
