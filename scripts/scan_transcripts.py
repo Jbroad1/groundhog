@@ -13,17 +13,27 @@ errors. From that stream we derive, per session:
   * error -> resolution pairs (an errored tool_result followed by the next tool_use).
 
 Transcripts range from ~130 B to tens of MB, so files are streamed line-by-line
-and never loaded whole. An (mtime, size) cache makes re-runs incremental: an
-unchanged file is not re-parsed.
+and never loaded whole.
+
+Two incremental back-ends share one parser (``_Acc``):
+  * **legacy** -- an ``(mtime, size)`` cache dict; unchanged files are not
+    re-parsed. Kept for the importable API and the unit tests.
+  * **index** -- the durable SQLite ``IndexStore`` (pass ``store=``). Adds a lazy
+    ``os.scandir`` walk (never materialises the whole file list), size-primary
+    change detection (OneDrive-safe), byte-offset resume for appended sessions,
+    and a per-session commit so a crash leaves safe partial progress.
 
 Importable (`scan_transcripts(...)`) and runnable standalone.
 """
 from __future__ import annotations
 
 import argparse
+import json
+import os
 from pathlib import Path
 
 import groundhog_lib as fl
+from index_store import head_hash
 
 # Per-session caps keep memory and scan.json size bounded on pathological
 # mega-sessions without losing the signal we mine on.
@@ -39,56 +49,55 @@ _EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 def _is_error_result(block: dict) -> bool:
     if not isinstance(block, dict):
         return False
-    if block.get("is_error") is True:
-        return True
-    return False
+    return block.get("is_error") is True
 
 
-def extract_session(path: Path, project_dir: str | None = None) -> dict:
-    """Parse a single transcript into a compact, cacheable summary."""
-    session_id = path.stem
-    cwd = ""
-    git_branch = ""
-    first_ts = None
-    last_ts = None
+class _Acc:
+    """Accumulator for one session's mineable signal. Shared by the full parse and
+    the append-resume parse so the two paths can never drift. Seed from ``base`` to
+    continue an already-parsed session past a byte offset."""
 
-    sequence: list[str] = []
-    lines: list[int] = []
-    edits: list[dict] = []
-    bash: list[dict] = []
-    error_fixes: list[dict] = []
+    def __init__(self, path, project_dir=None, base=None):
+        self.path = str(path)
+        self.project_dir = project_dir or Path(path).parent.name
+        b = base or {}
+        self.session_id = b.get("session_id") or Path(path).stem
+        self.cwd = b.get("cwd", "")
+        self.git_branch = b.get("git_branch", "")
+        self.first_ts = b.get("first_ts")
+        self.last_ts = b.get("last_ts")
+        self.sequence = list(b.get("sequence", []))
+        self.lines = list(b.get("lines", []))
+        self.edits = list(b.get("edits", []))
+        self.bash = list(b.get("bash", []))
+        self.error_fixes = list(b.get("error_fixes", []))
+        self.n_lines = b.get("n_lines", 0)
+        # id->tool and a pending error are per-turn state; not carried across an
+        # append boundary (a pending error exactly at the split is dropped -- rare
+        # and low-signal).
+        self.id_to_tool: dict = {}
+        self.pending_error_tool = None
+        self.saturated = False
 
-    id_to_tool: dict[str, str] = {}
-    pending_error_tool: str | None = None  # set when an error result seen; paired with next tool_use
-
-    saturated = False
-    for ln, rec in fl.iter_jsonl(path):
-        if ln > MAX_LINES:
-            break
-        # once every collector is full, the rest of a mega-transcript adds
-        # nothing we mine -- stop early (huge speedup on 20-33MB sessions).
-        if saturated:
-            break
+    def feed(self, rec, ln: int) -> None:
         if not isinstance(rec, dict):
-            continue
+            return
         rtype = rec.get("type")
-
-        # envelope metadata (present on assistant/user/attachment records)
-        if not cwd and rec.get("cwd"):
-            cwd = str(rec["cwd"])
-        if not git_branch and rec.get("gitBranch"):
-            git_branch = str(rec["gitBranch"])
+        if not self.cwd and rec.get("cwd"):
+            self.cwd = str(rec["cwd"])
+        if not self.git_branch and rec.get("gitBranch"):
+            self.git_branch = str(rec["gitBranch"])
         if rec.get("sessionId"):
-            session_id = str(rec["sessionId"])
+            self.session_id = str(rec["sessionId"])
         ts = fl.to_epoch_ms(rec.get("timestamp"))
         if ts is not None:
-            first_ts = ts if first_ts is None else min(first_ts, ts)
-            last_ts = ts if last_ts is None else max(last_ts, ts)
+            self.first_ts = ts if self.first_ts is None else min(self.first_ts, ts)
+            self.last_ts = ts if self.last_ts is None else max(self.last_ts, ts)
 
         msg = rec.get("message")
         content = msg.get("content") if isinstance(msg, dict) else None
         if not isinstance(content, list):
-            continue
+            return
 
         if rtype == "assistant":
             for b in content:
@@ -98,55 +107,196 @@ def extract_session(path: Path, project_dir: str | None = None) -> dict:
                 tid = b.get("id")
                 tool_input = b.get("input", {})
                 if tid:
-                    id_to_tool[str(tid)] = name
-
-                # pair a preceding error with this resolution step
-                if pending_error_tool is not None:
-                    if len(error_fixes) < MAX_ERRFIX:
-                        error_fixes.append({"err": pending_error_tool, "fix": name, "line": ln})
-                    pending_error_tool = None
-
-                if len(sequence) < MAX_CALLS:
-                    sequence.append(name)
-                    lines.append(ln)
+                    self.id_to_tool[str(tid)] = name
+                if self.pending_error_tool is not None:
+                    if len(self.error_fixes) < MAX_ERRFIX:
+                        self.error_fixes.append({"err": self.pending_error_tool,
+                                                 "fix": name, "line": ln})
+                    self.pending_error_tool = None
+                if len(self.sequence) < MAX_CALLS:
+                    self.sequence.append(name)
+                    self.lines.append(ln)
                 else:
-                    saturated = True  # 4000 calls is ample; stop scanning this mega-session
-
-                if name in _EDIT_TOOLS and len(edits) < MAX_EDITS:
+                    self.saturated = True
+                if name in _EDIT_TOOLS and len(self.edits) < MAX_EDITS:
                     fp = fl.file_path_from_input(name, tool_input)
                     if fp:
-                        edits.append({"path": fl.repo_relative(fp, cwd), "line": ln})
-                elif name == "Bash" and len(bash) < MAX_BASH:
+                        self.edits.append({"path": fl.repo_relative(fp, self.cwd), "line": ln})
+                elif name == "Bash" and len(self.bash) < MAX_BASH:
                     cmd = tool_input.get("command", "") if isinstance(tool_input, dict) else ""
                     if cmd:
-                        bash.append({"tmpl": fl.template_bash(str(cmd)), "line": ln})
-
+                        self.bash.append({"tmpl": fl.template_bash(str(cmd)), "line": ln})
         elif rtype == "user":
             for b in content:
                 if isinstance(b, dict) and b.get("type") == "tool_result" and _is_error_result(b):
                     tid = str(b.get("tool_use_id", ""))
-                    pending_error_tool = id_to_tool.get(tid, "?")
+                    self.pending_error_tool = self.id_to_tool.get(tid, "?")
                     break  # one error marker per user turn is enough
 
-    return {
-        "file": str(path),
-        "session_id": session_id,
-        "project_dir": project_dir or path.parent.name,
-        "cwd": cwd,
-        "git_branch": git_branch,
-        "first_ts": first_ts,
-        "last_ts": last_ts,
-        "n_calls": len(sequence),
-        "sequence": sequence,
-        "lines": lines,
-        "edits": edits,
-        "bash": bash,
-        "error_fixes": error_fixes,
-    }
+    def summary(self) -> dict:
+        return {
+            "file": self.path,
+            "session_id": self.session_id,
+            "project_dir": self.project_dir,
+            "cwd": self.cwd,
+            "git_branch": self.git_branch,
+            "first_ts": self.first_ts,
+            "last_ts": self.last_ts,
+            "n_calls": len(self.sequence),
+            "n_lines": self.n_lines,
+            "sequence": self.sequence,
+            "lines": self.lines,
+            "edits": self.edits,
+            "bash": self.bash,
+            "error_fixes": self.error_fixes,
+        }
+
+
+def extract_session(path: Path, project_dir: str | None = None) -> dict:
+    """Full parse of a transcript (text-mode streaming). Legacy back-end + tests."""
+    acc = _Acc(path, project_dir)
+    for ln, rec in fl.iter_jsonl(path):
+        if ln > MAX_LINES or acc.saturated:
+            break
+        acc.feed(rec, ln)
+        acc.n_lines = ln
+    return acc.summary()
+
+
+def _read_jsonl_from(path, start_offset: int = 0, start_line: int = 0):
+    """Yield (record, line_no, committed_offset) for each newline-terminated JSON
+    line at/after ``start_offset``. ``committed_offset`` sits just past the line's
+    newline, so resuming there never re-reads or splits a line. A trailing line
+    with no newline is left for the next pass (it may still be mid-write)."""
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(start_offset)
+            offset = start_offset
+            ln = start_line
+            for raw in fh:                    # binary iteration splits on b"\n"
+                if not raw.endswith(b"\n"):
+                    break
+                offset += len(raw)
+                ln += 1
+                s = raw.decode("utf-8", "replace").strip()
+                if not s:
+                    continue
+                try:
+                    yield json.loads(s), ln, offset
+                except (ValueError, TypeError):
+                    continue
+    except (OSError, UnicodeError):
+        return
+
+
+def extract_or_extend(path, project_dir=None, start_offset: int = 0, base=None):
+    """Parse a transcript from ``start_offset``, extending ``base`` if given.
+    Returns (summary, end_offset). Full parse: start_offset=0, base=None."""
+    acc = _Acc(path, project_dir, base=base)
+    end_offset = start_offset
+    for rec, ln, off in _read_jsonl_from(path, start_offset, acc.n_lines):
+        if ln > MAX_LINES or acc.saturated:
+            break
+        acc.feed(rec, ln)
+        acc.n_lines = ln
+        end_offset = off
+    return acc.summary(), end_offset
+
+
+# --------------------------------------------------------------------------- #
+def _iter_jsonl_entries(root: str):
+    """Lazy recursive walk yielding ``os.DirEntry`` for every ``*.jsonl`` under
+    ``root``. Uses ``os.scandir`` (stat cached on the entry) and never builds the
+    whole file list in memory -- the rglob that crashed at ~1M transcripts."""
+    stack = [str(root)]
+    while stack:
+        d = stack.pop()
+        try:
+            it = os.scandir(d)
+        except OSError:
+            continue
+        with it:
+            for entry in it:
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        stack.append(entry.path)
+                    elif entry.name.endswith(".jsonl") and entry.is_file(follow_symlinks=False):
+                        yield entry
+                except OSError:
+                    continue
+
+
+def _slug_for(root: Path, path: str) -> str:
+    try:
+        rel = Path(path).relative_to(root)
+        return rel.parts[0] if rel.parts else Path(path).parent.name
+    except ValueError:
+        return Path(path).parent.name
+
+
+def _scan_indexed(config_dir: Path, since_ms, store) -> dict:
+    """Index back-end: incremental, crash-safe, bounded-memory. Updates the
+    SQLite index during a lazy walk, then returns the in-window session summaries
+    streamed back from the index (ordered by path -> deterministic)."""
+    root = config_dir / "projects"
+    out = {"source": "transcripts", "root": str(root), "exists": root.is_dir(),
+           "files_total": 0, "files_in_window": 0, "files_parsed": 0,
+           "cache_hits": 0, "sessions": []}
+    if not root.is_dir():
+        return out
+
+    seen = []
+    for entry in _iter_jsonl_entries(root):
+        path = entry.path
+        seen.append(path)
+        try:
+            st = entry.stat()
+        except OSError:
+            continue
+        out["files_total"] += 1
+        size = st.st_size
+        mtime_ms = int(st.st_mtime * 1000)
+        # Recency prefilter: a session last written before the window has no
+        # in-window activity. Keep its row (it is in `seen`), just skip parsing.
+        if since_ms is not None and mtime_ms < since_ms:
+            continue
+        out["files_in_window"] += 1
+
+        state, resume = store.classify(path, size, mtime_ms)
+        if state == "unchanged":
+            out["cache_hits"] += 1
+            continue
+        slug = _slug_for(root, path)
+        if state == "appended":
+            row = store.get_session(path)
+            base = None
+            if row is not None:
+                try:
+                    base = json.loads(row["summary_json"])
+                except (ValueError, TypeError):
+                    base = None
+            summary, end_off = extract_or_extend(path, slug, resume, base)
+        else:  # new / modified -> full re-parse
+            summary, end_off = extract_or_extend(path, slug, 0, None)
+
+        # If we stopped at the per-file line cap there is nothing more to mine, so
+        # point the resume offset at EOF to avoid re-reading a mega-session on
+        # every future append.
+        last_off = size if summary.get("n_calls", 0) >= MAX_CALLS else end_off
+        store.upsert_session(path, size, mtime_ms, last_off,
+                             head_hash(path, min(4096, size)), summary)  # per-session commit
+        out["files_parsed"] += 1
+
+    store.prune_missing(seen)
+    out["sessions"] = list(store.iter_summaries(since_ms))
+    return out
 
 
 def scan_transcripts(config_dir: Path, since_ms: int | None = None,
-                     cache: dict | None = None) -> dict:
+                     cache: dict | None = None, store=None) -> dict:
+    if store is not None:
+        return _scan_indexed(config_dir, since_ms, store)
+
     root = config_dir / "projects"
     out = {"source": "transcripts", "root": str(root), "exists": root.is_dir(),
            "files_total": 0, "files_in_window": 0, "files_parsed": 0,

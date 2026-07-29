@@ -129,6 +129,61 @@ def build(dest: Path) -> Path:
     return dest
 
 
+def build_hard_negatives(dest: Path) -> Path:
+    """A second, separate fixture tree that exercises the domain-agnostic scorer
+    (WS3) with the three things the old scorer got wrong:
+
+      * HARNESS PLUMBING — a `Task -> SendMessage` sequence in 3 sessions. Must be
+        flagged `harness_noise`, heavily attenuated, and NOT promoted to a
+        skill-chain (the old scorer promoted anything containing Task/Skill/Agent).
+      * RESEARCH — a `WebSearch -> WebFetch -> Read` loop in 3 sessions. Must NOT
+        be treated as navigation noise (the old scorer down-weighted WebSearch/
+        WebFetch as read-only exploration); it is a legitimate candidate.
+      * NON-DEV GUARDRAIL — `terraform plan` across 4 sessions. Must reach the
+        guardrail (hook) tier STRUCTURALLY, carrying no dev-CI verb (the old
+        scorer only let test/lint/build commands become guardrails).
+
+    Kept apart from build() so the primary fixture's exact counts stay stable.
+    """
+    dest = Path(dest)
+    cwd = "C:/work/infra"
+    proj = dest / "projects" / "C--work-infra"
+    ts = "2026-07-20T10:00:00.000Z"
+
+    # harness plumbing: Task -> SendMessage, 3 sessions (Task was auto-promoted to
+    # a skill-chain by the old scorer -- that must no longer happen).
+    for i in range(1, 4):
+        s = f"harness{i}"
+        _write_jsonl(proj / f"{s}.jsonl", [
+            _asst(s, ts, "a", "Task", {"description": "spawn worker"}, cwd=cwd),
+            _result(s, ts, "a", cwd=cwd),
+            _asst(s, ts, "b", "SendMessage", {"to": "worker"}, cwd=cwd),
+            _result(s, ts, "b", cwd=cwd),
+        ])
+
+    # research/report loop: WebSearch -> WebFetch -> Read, 3 sessions.
+    for i in range(1, 4):
+        s = f"research{i}"
+        _write_jsonl(proj / f"{s}.jsonl", [
+            _asst(s, ts, "w", "WebSearch", {"query": "market size 2026"}, cwd=cwd),
+            _result(s, ts, "w", cwd=cwd),
+            _asst(s, ts, "f", "WebFetch", {"url": "https://example.com/report"}, cwd=cwd),
+            _result(s, ts, "f", cwd=cwd),
+            _asst(s, ts, "r", "Read", {"file_path": f"{cwd}/notes.md"}, cwd=cwd),
+            _result(s, ts, "r", cwd=cwd),
+        ])
+
+    # non-dev recurring guardrail command: terraform plan across 4 sessions.
+    for i in range(1, 5):
+        s = f"tf{i}"
+        _write_jsonl(proj / f"{s}.jsonl", [
+            _asst(s, ts, "t", "Bash", {"command": "terraform plan -out plan.tfplan"}, cwd=cwd),
+            _result(s, ts, "t", cwd=cwd),
+        ])
+
+    return dest
+
+
 if __name__ == "__main__":
     import sys
     out = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("_fixtures")

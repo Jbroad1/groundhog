@@ -8,6 +8,8 @@ secret-scrubbed ``scan.json`` of candidate workflows. Every candidate carries:
   * a stable ``signature`` and human ``title`` / ``summary``,
   * ``frequency`` (how many sessions / occurrences),
   * ``steps_saved`` / ``automatability`` / ``already_automated`` factors,
+  * ``leverage`` = frequency x steps_saved (the raw prize: how much manual work
+    automating this removes),
   * a ``score`` = frequency x steps_saved x automatability x (1 - already_automated),
   * a *provisional* ``recommended_primitive`` (skill / hook / hookify-rule /
     skill-chain) that the analyzer subagent later refines, and
@@ -17,8 +19,14 @@ Candidate kinds mined:
   tool-sequence, repeated-call-loop, edit-hotspot, bash-template, error-fix,
   prompt-cluster, plan-type.
 
+The scorer is deliberately domain-agnostic. It attenuates harness/agent-plumbing
+loops and pure-navigation loops (not real workflows), treats guardrails as a
+STRUCTURAL signal rather than a dev-CI allowlist, and ranks leverage-forward so
+research/report work is not sunk below developer work. See the constants below.
+
 The output is deterministic: identical input data -> byte-identical candidate
-ordering (stable sort on (-score, signature)). This is what the unit tests pin.
+ordering (leverage-forward rank, stable signature tie-break). This is what the
+unit tests pin.
 
 The loop-detection threshold reuses the repeated-call heuristic documented in the
 ``agent-introspection-debugging`` skill. Secret scrubbing follows the approach of
@@ -27,6 +35,9 @@ The loop-detection threshold reuses the repeated-call heuristic documented in th
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
+import re
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,38 +59,105 @@ MIN_PROMPT_CLUSTER = 3
 MIN_PLAN_CLUSTER = 2
 MAX_PROOFS = 5
 
-# automatability weight per kind (0..1)
+# Automatability weight per kind (0..1): how mechanically a candidate converts
+# into an automation. Deterministic must-fire guardrails sit highest; everything
+# that captures a repeatable task sits in a deliberately COMPRESSED band so no
+# domain is structurally sunk below another. (Earlier weights ranked developer
+# kinds well above research/prompt kinds — a shape bias. Automatability no longer
+# drives the ranking either; ranking is leverage-forward. See mine().)
 _AUTOMATABILITY = {
+    "bash-guardrail": 0.85,      # deterministic check that must fire -> hook
+    "repeated-call-loop": 0.80,  # a manual loop -> encapsulate
+    "error-fix": 0.75,           # a recurring error->fix is a guardrail candidate
+    "plan-type": 0.75,           # a recurring pipeline -> skill-chain
     "tool-sequence": 0.70,
-    "repeated-call-loop": 0.85,
-    "edit-hotspot": 0.60,
-    "bash-template": 0.55,
-    "bash-guardrail": 0.80,
-    "error-fix": 0.50,
-    "prompt-cluster": 0.65,
-    "plan-type": 0.75,
+    "prompt-cluster": 0.70,      # a recurring request (incl. research/report) -> skill
+    "edit-hotspot": 0.65,
+    "bash-template": 0.60,
 }
 
-# Bash templates that look like deterministic guardrails (fire-on-event hooks).
+# --- guardrails: a STRUCTURAL signal, not a dev-CI allowlist ---------------- #
+# A recurring deterministic command that shows up across many DISTINCT sessions
+# reads as a habitual check the user runs to gate their work — that wants to fire
+# on an event (a hook), whatever the domain (`terraform plan`, `dbt run`, a data-
+# validation script, as much as `pytest`). Dev-CI verbs are a confidence BOOSTER
+# that raises certainty, never a gate: a non-dev command that recurs the same way
+# reaches the hook tier too.
+_GUARD_MIN_SESSIONS = 3
 _GUARD_TOKENS = ("test", "lint", "format", "prettier", "eslint", "ruff", "mypy",
                  "tsc", "typecheck", "vitest", "jest", "pytest", "validate",
                  "build", "gofmt", "clippy", "black", "flake8")
+# Match tokens as WHOLE WORDS: "test" must not fire on "latest", "build" not on
+# "rebuild". (`pytest` still matches its own token; "npm test" matches "test".)
+_GUARD_RE = re.compile(r"\b(?:" + "|".join(_GUARD_TOKENS) + r")\b")
 
-# Read-only exploration tools: loops/sequences made ENTIRELY of these are usually
-# the model looking around, not a workflow worth automating. Down-weight them so
-# real edit/build/test workflows rank above exploration noise.
-READONLY_TOOLS = {"Glob", "Grep", "Read", "LS", "NotebookRead", "WebFetch", "WebSearch"}
-_EXPLORE_PENALTY = 0.3
+# --- noise: loops/sequences that are not real workflows --------------------- #
+# Harness / agent-orchestration tools. A sequence or loop built ENTIRELY from
+# these is the agent driving its own plumbing (subagent dispatch, task
+# bookkeeping, skill lookup), not a user workflow. On multi-agent histories this
+# is the #1 source of high-frequency noise, so we attenuate it hard AND flag it
+# (`harness_noise`) so the analyzer drops it fast. We also stopped promoting
+# Skill/Task/Agent sequences to skill-chains for the same reason (see _recommend).
+_HARNESS_TOOLS = {"ToolSearch", "SendMessage", "Task", "Agent",
+                  "TaskCreate", "TaskUpdate", "TaskOutput", "Skill"}
+_HARNESS_ATTEN = 0.05
+
+# Pure-navigation read-only tools. A loop/sequence of ONLY these is the model
+# looking around, not a workflow. NOTE: WebSearch / WebFetch are deliberately
+# ABSENT — a research/report loop (search -> fetch -> read -> synthesise) is a
+# legitimate workflow to automate, not navigation noise.
+_NAV_TOOLS = {"Glob", "Grep", "Read", "LS", "NotebookRead"}
+_NAV_ATTEN = 0.3
 
 
-def _explore_factor(tools) -> float:
-    return _EXPLORE_PENALTY if tools and all(t in READONLY_TOOLS for t in tools) else 1.0
+def _noise_class(tools) -> str:
+    """Classify a tool bag: 'harness' (agent plumbing), 'nav' (pure navigation),
+    or '' (a real workflow). An empty bag is not noise."""
+    ts = [t for t in tools if t]
+    if not ts:
+        return ""
+    if all(t in _HARNESS_TOOLS for t in ts):
+        return "harness"
+    if all(t in _NAV_TOOLS for t in ts):
+        return "nav"
+    return ""
+
+
+def _noise_factor(cls: str) -> float:
+    return {"harness": _HARNESS_ATTEN, "nav": _NAV_ATTEN}.get(cls, 1.0)
 
 
 # --------------------------------------------------------------------------- #
-def _guardish(tmpl: str) -> bool:
-    t = tmpl.lower()
-    return any(tok in t for tok in _GUARD_TOKENS)
+def _guard_boost(tmpl: str) -> bool:
+    """Dev-CI verb present as a WHOLE WORD? A booster for guardrail confidence, not
+    a gate. Substring matching wrongly fired on 'latest'/'rebuild'/'attestation'."""
+    return bool(_GUARD_RE.search(tmpl.lower()))
+
+
+def _guardish(tmpl: str, sessions: int) -> bool:
+    """Structural guardrail signal: a deterministic command habitual enough to
+    recur across sessions, OR one carrying a dev-CI verb. Either reaches the hook
+    tier; being a dev command is not required."""
+    return sessions >= _GUARD_MIN_SESSIONS or _guard_boost(tmpl)
+
+
+def _bash_steps_saved(tmpl: str) -> int:
+    """Data-driven leverage for a recurring command: how many manual pieces
+    wrapping it removes. Count pipeline segments + flags, so a multi-stage piped
+    command saves more than a bare one-word command. (Was hard-coded 2.)"""
+    segs = sum(1 for s in re.split(r"\|\||&&|[;|]", tmpl) if s.strip())
+    flags = len(re.findall(r"(?:^|\s)-{1,2}[A-Za-z][\w-]*", tmpl))
+    return max(1, min(segs + flags, 8))
+
+
+def _prompt_steps_saved(sample: str) -> int:
+    """Data-driven leverage for a recurring request: estimate the manual steps it
+    implies from its structure (commas, and/then/after conjunctions, numbered
+    items). A multi-clause ask ('research X, summarise, then draft') saves more
+    than a one-liner. (Was hard-coded 2.)"""
+    parts = re.split(r",|\band\b|\bthen\b|\bafter\b|;|\d+[.)]", (sample or "").lower())
+    clauses = sum(1 for p in parts if len(p.strip()) > 3)
+    return max(2, min(clauses, 10))
 
 
 def _overlap_ratio(tokens: set, existing: set) -> float:
@@ -114,10 +192,13 @@ def _recommend(kind: str, signature, evidence: dict, env: dict | None):
         return "skill-chain", ("A recurring multi-step plan shape is best captured as a "
                                "skill-chain that sequences sub-skills."), False
     if kind == "tool-sequence":
-        sig = list(signature)
-        if any(s in ("Skill", "Task", "Agent") for s in sig) or len(sig) >= 4:
-            return "skill-chain", ("A long sequence that spans skills/subagents fits a "
-                                   "skill-chain."), False
+        # A long, repeatable multi-step sequence reads as a skill-chain. We no
+        # longer promote a sequence just because it contains Skill/Task/Agent —
+        # that is harness plumbing (see _HARNESS_TOOLS), and promoting it floated
+        # orchestration noise to the top masquerading as buildable work.
+        if len(list(signature)) >= 4:
+            return "skill-chain", ("A long, repeatable multi-step sequence fits a "
+                                   "skill-chain that sequences its steps."), False
         return "skill", ("A repeatable multi-step sequence that needs judgment fits a "
                          "skill."), False
     if kind == "repeated-call-loop":
@@ -136,10 +217,12 @@ def _score(kind, frequency, steps_saved, already_automated, factor=1.0):
 def _finish(cand, kind, frequency, steps_saved, already, env, factor=1.0):
     prim, rationale, managed_warn = _recommend(kind, cand.get("signature"), cand.get("evidence", {}), env)
     score, auto = _score(_AUTOMATABILITY_KEY(kind, cand), frequency, steps_saved, already, factor)
+    leverage = frequency * steps_saved
     cand.update({
         "kind": kind,
         "frequency": frequency,
         "steps_saved": steps_saved,
+        "leverage": leverage,
         "automatability": auto,
         "already_automated": already,
         "score": score,
@@ -147,6 +230,13 @@ def _finish(cand, kind, frequency, steps_saved, already, env, factor=1.0):
         "primitive_rationale": rationale,
         "managed_hook_warning": managed_warn,
     })
+    # Leverage-forward rank key (stripped before output). The real prize is
+    # frequency x steps_saved; we deliberately do NOT rank by `score`, which folds
+    # in `automatability` — a per-kind shape weight that pushed research/prompt
+    # work below dev work ("score fights leverage"). We DO keep the noise
+    # attenuation (harness/nav loops) and the already-automated suppressor, so
+    # plumbing and already-solved work don't consume top-N shard slots.
+    cand["_rank"] = leverage * factor * (1.0 - already)
     return cand
 
 
@@ -213,6 +303,7 @@ def _mine_sequences(sessions, meta, existing, env, min_sessions):
         freq = len(e["sessions"])
         projs = sorted({meta[si]["proj"] for si in e["sessions"]})[:8]
         already = _overlap_ratio(set(x.lower() for x in w), existing)
+        cls = _noise_class(w)
         cand = {
             "signature": list(w),
             "title": " -> ".join(w),
@@ -220,10 +311,11 @@ def _mine_sequences(sessions, meta, existing, env, min_sessions):
                        f"({e['count']} occurrences).",
             "projects": projs,
             "proof_paths": e["proofs"][:MAX_PROOFS],
-            "evidence": {"occurrences": e["count"], "sessions": freq},
+            "evidence": {"occurrences": e["count"], "sessions": freq,
+                         "harness_noise": cls == "harness", "nav_noise": cls == "nav"},
         }
         cands.append(_finish(cand, "tool-sequence", freq, len(w), already, env,
-                             _explore_factor(w)))
+                             _noise_factor(cls)))
     return cands
 
 
@@ -252,6 +344,7 @@ def _mine_loops(sessions, meta, existing, env):
         projs = sorted({meta[si]["proj"] for si in e["sessions"]})[:8]
         already = _overlap_ratio({tool.lower()}, existing)
         steps = min(e["max_run"], 8)
+        cls = _noise_class([tool])
         cand = {
             "signature": [tool, "loop"],
             "title": f"Repeated {tool} loop (up to {e['max_run']} in a row)",
@@ -260,10 +353,11 @@ def _mine_loops(sessions, meta, existing, env):
                        f"encapsulating.",
             "projects": projs,
             "proof_paths": e["proofs"][:MAX_PROOFS],
-            "evidence": {"max_run": e["max_run"], "sessions": freq},
+            "evidence": {"max_run": e["max_run"], "sessions": freq,
+                         "harness_noise": cls == "harness", "nav_noise": cls == "nav"},
         }
         cands.append(_finish(cand, "repeated-call-loop", freq, steps, already, env,
-                             _explore_factor([tool])))
+                             _noise_factor(cls)))
     return cands
 
 
@@ -320,18 +414,20 @@ def _mine_bash(sessions, meta, existing, env):
         if e["count"] < MIN_BASH_RECUR:
             continue
         freq = len(e["sessions"])
-        guard = _guardish(tmpl)
+        guard = _guardish(tmpl, freq)
+        boosted = _guard_boost(tmpl)
         already = _overlap_ratio(set(fl.slugify(tmpl).split("-")), existing)
         cand = {
             "signature": ["bash", tmpl],
             "title": f"Recurring command: {tmpl[:70]}",
             "summary": f"'{tmpl[:80]}' ran {e['count']} times across {freq} session(s)"
-                       + (" and looks like a guardrail check." if guard else "."),
+                       + (" and recurs like a guardrail check." if guard else "."),
             "projects": sorted({meta[si]["proj"] for si in e["sessions"]})[:8],
             "proof_paths": e["proofs"][:MAX_PROOFS],
-            "evidence": {"run_count": e["count"], "sessions": freq, "guardish": guard},
+            "evidence": {"run_count": e["count"], "sessions": freq,
+                         "guardish": guard, "guard_boosted": boosted},
         }
-        cands.append(_finish(cand, "bash-template", freq, 2, already, env))
+        cands.append(_finish(cand, "bash-template", freq, _bash_steps_saved(tmpl), already, env))
     return cands
 
 
@@ -395,7 +491,8 @@ def _mine_prompts(hist, existing, env):
                              "detail": c["sample"][:100]}],
             "evidence": {"prompt_count": c["count"], "is_slash": c["is_slash"]},
         }
-        cands.append(_finish(cand, "prompt-cluster", c["count"], 2, already, env))
+        cands.append(_finish(cand, "prompt-cluster", c["count"],
+                             _prompt_steps_saved(c["sample"]), already, env))
     return cands
 
 
@@ -430,10 +527,59 @@ def _mine_plans(plans, existing, env):
 
 
 # --------------------------------------------------------------------------- #
+# Verdict memory (index-layer). A candidate's evidence_fingerprint captures what
+# we knew when we last decided; if it matches the ledger, a re-run can surface the
+# prior decision instead of re-analysing from scratch.
+def _evidence_fingerprint(cand: dict) -> str:
+    payload = json.dumps({
+        "kind": cand.get("kind"),
+        "signature": cand.get("signature"),
+        "frequency": cand.get("frequency"),
+        "steps_saved": cand.get("steps_saved"),
+        "evidence": cand.get("evidence", {}),
+    }, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _attach_verdict_memory(store, candidates) -> None:
+    from index_store import sig_key
+    ledger = store.all_verdicts()
+    for c in candidates:
+        fp = _evidence_fingerprint(c)
+        c["evidence_fingerprint"] = fp
+        v = ledger.get(sig_key(c["signature"]))
+        if v:
+            c["prior_verdict"] = {
+                "primitive": v.get("primitive"),
+                "decision": v.get("decision"),
+                "reason": v.get("reason"),
+                "confidence": v.get("confidence"),
+                "evidence_unchanged": (v.get("evidence_fingerprint") == fp),
+                "decided_at": v.get("decided_at"),
+            }
+
+
+def _materialize_aggregates(store, candidates) -> None:
+    rows = []
+    for c in candidates:
+        ev = c.get("evidence", {})
+        occ = (ev.get("occurrences") or ev.get("run_count") or ev.get("edit_count")
+               or ev.get("pair_count") or ev.get("prompt_count") or ev.get("plan_count")
+               or c.get("frequency", 0))
+        rows.append((c.get("kind", ""), "|".join(map(str, c.get("signature", []))),
+                     c.get("frequency", 0), occ, c.get("steps_saved", 0),
+                     c.get("proof_paths", [])[:MAX_PROOFS]))
+    store.replace_aggregates(rows)
+
+
 def mine(config_dir: Path, since_ms: int | None = None, cache: dict | None = None,
-         env: dict | None = None, min_sessions: int = MIN_SESSIONS_SEQ) -> dict:
+         env: dict | None = None, min_sessions: int = MIN_SESSIONS_SEQ,
+         store=None) -> dict:
     hist = scan_history(config_dir, since_ms)
-    trans = scan_transcripts(config_dir, since_ms, cache=cache)
+    if store is not None:
+        trans = scan_transcripts(config_dir, since_ms, store=store)
+    else:
+        trans = scan_transcripts(config_dir, since_ms, cache=cache)
     plans = scan_plans(config_dir, since_ms)
 
     sessions = trans["sessions"]
@@ -451,12 +597,24 @@ def mine(config_dir: Path, since_ms: int | None = None, cache: dict | None = Non
     candidates += _mine_prompts(hist, existing, env)
     candidates += _mine_plans(plans, existing, env)
 
-    # deterministic ordering; stable tie-break on the signature text
-    candidates.sort(key=lambda c: (-c["score"], "|".join(map(str, c["signature"]))))
+    # Leverage-forward, deterministic ordering. Primary key is the leverage-rank
+    # (frequency x steps_saved, noise-attenuated, already-automated-suppressed) so
+    # the top-N slice `shard` hands to the analyzers is the real prize, not the
+    # automatability-folded score. `score` breaks ties; the signature text makes
+    # it stable (identical input -> identical order).
+    candidates.sort(key=lambda c: (-c["_rank"], -c["score"], "|".join(map(str, c["signature"]))))
     for idx, c in enumerate(candidates, start=1):
         c["id"] = f"cand-{idx:04d}"
+        del c["_rank"]  # internal ranking scratch; never emitted
     # move id to front for readability
     candidates = [{**{"id": c.pop("id")}, **c} for c in candidates]
+
+    # Index-layer memory: remember prior verdicts and roll up the aggregates so a
+    # re-run surfaces old decisions instead of re-asking. Legacy path leaves the
+    # candidate shape untouched.
+    if store is not None:
+        _attach_verdict_memory(store, candidates)
+        _materialize_aggregates(store, candidates)
 
     scan = {
         "schema_version": fl.SCHEMA_VERSION,

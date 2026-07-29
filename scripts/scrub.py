@@ -82,8 +82,11 @@ _PATTERNS: list[tuple[str, re.Pattern, str]] = [
     #   * A stray '@' in a path/query (.../api?email=a@b.com) stays untouched
     #     because [^\s/]+ cannot cross the '/'.
     (
+        # `[^\s:/@]*:` (was `+:`) also catches the empty-username DSN form
+        # `redis://:password@host` / `mongodb://:pw@host`, the sibling of the
+        # empty-host case handled by `(@[^\s@/]*)`.
         "url-credentials",
-        re.compile(r"([a-zA-Z][a-zA-Z0-9+.\-]{0,31}://[^\s:/@]+:)([^\s/]+)(@[^\s@/]*)"),
+        re.compile(r"([a-zA-Z][a-zA-Z0-9+.\-]{0,31}://[^\s:/@]*:)([^\s/]+)(@[^\s@/]*)"),
         r"\1[REDACTED]\3",
     ),
     # Generic "<secret-ish key> = <value>" fallback. Keeps the key + operator,
@@ -94,7 +97,7 @@ _PATTERNS: list[tuple[str, re.Pattern, str]] = [
     (
         "key-value-secret",
         re.compile(
-            r"(?i)((?:api[_-]?key|apikey|secret[_-]?key|secret|"
+            r"(?i)((?:api[_-]?key|apikey|secret[_-]?key|access[_-]?key|secret|"
             r"access[_-]?token|refresh[_-]?token|auth[_-]?token|"
             r"client[_-]?secret|private[_-]?key|password|passwd|pwd|token)"
             r"""["']?\s*[:=]\s*)"""

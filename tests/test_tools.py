@@ -155,5 +155,45 @@ class PackageSkillTests(unittest.TestCase):
         self.assertNotIn("sym-skill/link.txt", names, "symlink was bundled into the zip")
 
 
+class CompileReviewTests(unittest.TestCase):
+    """WS5: the author->review->revise compile ships its two agents + a bundled
+    grader, and the deterministic validator floor separates a weak draft from a
+    strong one. The full behavioural review loop is model-graded (evals.json a17)."""
+
+    def _read(self, rel):
+        return (ROOT / rel).read_text(encoding="utf-8", errors="replace").lower()
+
+    def _write(self, text):
+        d = Path(tempfile.mkdtemp()) / "skill"
+        d.mkdir()
+        (d / "SKILL.md").write_text(text, encoding="utf-8")
+        return d
+
+    def test_author_and_reviewer_agents_shipped(self):
+        comp = self._read("agents/compiler.md")
+        rev = self._read("agents/reviewer.md")
+        self.assertIn("model: sonnet", comp, "author not pinned to sonnet")
+        self.assertIn("model: sonnet", rev, "reviewer not pinned to sonnet")
+        # the reviewer must be independent -- it never grades its own draft
+        self.assertIn("never grade a draft you authored", rev)
+        self.assertIn("independent grader", rev)
+
+    def test_quality_rubric_shipped(self):
+        r = self._read("references/skill-quality-rubric.md")
+        for bar in ("triggerability", "grounding", "confidence"):
+            self.assertIn(bar, r, f"quality rubric missing the '{bar}' bar")
+
+    def test_validator_floor_separates_weak_from_strong(self):
+        # strong draft: the reviewer's deterministic floor is clean.
+        self.assertEqual(_errs(validate_skill(self._write(GOOD_SKILL))), [])
+        self.assertEqual(_warns(validate_skill(self._write(GOOD_SKILL))), [])
+        # weak draft: a description that summarises the workflow is flagged.
+        weak = GOOD_SKILL.replace(
+            "Use when you need the good thing to happen reliably.",
+            "First, grep the diff, then run the tests, then post comments.")
+        self.assertTrue(_warns(validate_skill(self._write(weak))),
+                        "a workflow-summary description should be flagged as weak")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

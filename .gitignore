@@ -1,3 +1,11 @@
+# --- groundhog: deferred roadmap ---
+# TODO (later): multi-host support via a provider-adapter seam.
+#   Goal: mine agents other than Claude Code (e.g. OpenAI Codex, ~/.codex sessions).
+#   Shape: pluggable history-reader -> normalized session summary; add a Codex reader;
+#          pluggable output target for Codex-native primitives.
+#   Deferred by design; core stays Claude Code-native for this pass.
+# ------------------------------------
+
 # Python
 __pycache__/
 *.py[cod]
@@ -10,6 +18,13 @@ __pycache__/
 last-run/
 cache.json
 manifest.json
+# durable SQLite index (+ WAL/SHM siblings and quarantined corrupt copies) --
+# holds mined session data; never commit
+index.db
+index.db-wal
+index.db-shm
+index.db.bak
+*.bak
 # analysis outputs may hold mined (best-effort-scrubbed) session data — never commit
 scan.json
 verdict.json

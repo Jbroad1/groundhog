@@ -1,12 +1,12 @@
 # Managed-hooks policy (`allowManagedHooksOnly`)
 
-Some machines ship a managed policy that sets `allowManagedHooksOnly: true`
-(seen here in `~/.claude/remote-settings.json`). When active, **user- and
-plugin-level hooks configured in `settings.json` may be silently inert** — only
-managed hooks run. A guardrail you "install" as a settings hook would then never
-fire, and nothing tells you.
+On a locked-down machine, a settings hook you "install" can be dead on arrival —
+and nothing tells you. groundhog treats that as a first-class constraint.
 
-groundhog treats this as a first-class constraint.
+Some machines ship a managed policy that sets `allowManagedHooksOnly: true` (seen
+here in `~/.claude/remote-settings.json`). When it is active, only managed hooks
+run; **user- and plugin-level hooks in `settings.json` may be silently inert**. So
+a guardrail installed as a settings hook would never fire.
 
 ## How groundhog handles it
 

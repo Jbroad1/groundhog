@@ -33,6 +33,11 @@ CODE_EVALS = [
     ("a5", "managed-policy",      "test_engine.EngineTests.test_bash_guardrail_and_managed_policy test_cli.CliTests.test_install_yes_writes_and_respects_managed_policy"),
     ("a6", "review-by-default",   "test_cli.CliTests.test_install_preview_writes_nothing test_cli.CliTests.test_dry_run_overrides_yes"),
     ("a7", "path-confinement",    "test_cli.PathConfinementTests"),
+    ("a11", "scorer-objectivity", "test_engine.ObjectivityTests"),
+    ("a12", "shard-merge-determinism", "test_cli.ShardMergeTests"),
+    ("a13", "guardrail-proof-bar", "test_engine.GuardrailProofBarTests"),
+    ("a15", "durable-index", "test_index"),
+    ("a16", "compile-review-loop", "test_tools.CompileReviewTests"),
 ]
 
 # a8: portable "no third-party imports" check (replaces evals.json's grep, which
@@ -41,9 +46,10 @@ _STDLIB_OK = {
     "argparse", "ast", "json", "re", "os", "sys", "hashlib", "pathlib",
     "datetime", "platform", "shutil", "zipfile", "collections", "subprocess",
     "itertools", "functools", "typing", "__future__", "io", "contextlib",
-    "tempfile", "unittest",
+    "tempfile", "unittest", "sqlite3",
 }
-_LOCAL_PREFIXES = ("groundhog", "scan_", "mine_", "scrub", "validate_", "package_", "preflight")
+_LOCAL_PREFIXES = ("groundhog", "scan_", "mine_", "scrub", "validate_", "package_",
+                   "preflight", "index_")
 
 
 def _run_unittest(targets: str) -> bool:

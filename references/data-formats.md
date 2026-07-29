@@ -55,6 +55,7 @@ Markdown: `# <title>` then `## <section>` blocks; numbered/`Step` lines counted.
   "signature": ["Grep", "Read", "Edit"],
   "frequency": 7,
   "steps_saved": 3,
+  "leverage": 21,
   "automatability": 0.7,
   "already_automated": 0.0,
   "score": 14.7,
@@ -68,8 +69,14 @@ Markdown: `# <title>` then `## <section>` blocks; numbered/`Step` lines counted.
   "evidence": { "occurrences": 19, "sessions": 7 }
 }
 ```
-`score = frequency × steps_saved × automatability × (1 − already_automated)`.
-Candidates are sorted `(-score, signature)` — identical input ⇒ identical order.
+`leverage = frequency × steps_saved` (the raw prize).
+`score = frequency × steps_saved × automatability × (1 − already_automated)` (kept
+as a field). Candidates are ordered **leverage-forward**: primary key is the
+leverage rank (leverage, attenuated for harness/nav noise, suppressed when
+already-automated), then `score`, then `signature` — so identical input ⇒
+identical order, and the top-N slice `shard` takes is the real prize, not the
+automatability-folded score. Harness/agent-plumbing and pure-navigation loops
+carry `evidence.harness_noise` / `evidence.nav_noise` flags and are attenuated.
 
 ### Candidate kinds
 | kind | source | provisional primitive |
@@ -77,9 +84,9 @@ Candidates are sorted `(-score, signature)` — identical input ⇒ identical or
 | `tool-sequence` | frequent tool n-gram (len 2–5) across sessions | skill / skill-chain (len≥4 or spans Skill/Task) |
 | `repeated-call-loop` | ≥3 identical consecutive calls | skill |
 | `edit-hotspot` | a path edited ≥4 times | skill |
-| `bash-template` | a command template run ≥4 times | hook/hookify if guard-ish (test/lint/build…), else skill |
+| `bash-template` | a command template run ≥4 times | hook/hookify if guard-ish (**structural**: recurs across ≥3 sessions, any domain; dev-CI verbs boost but don't gate), else skill |
 | `error-fix` | `tool_result.is_error` → next tool_use, ≥3× | hook/hookify (guardrail) |
-| `prompt-cluster` | ≥3 near-duplicate prompts (`history.jsonl`) | skill (slash-command clusters flagged already-automated) |
+| `prompt-cluster` | ≥3 near-duplicate prompts (`history.jsonl`) | skill (incl. research/report requests; slash-command clusters flagged already-automated) |
 | `plan-type` | ≥2 plans sharing a normalized title | skill-chain |
 
 ## Output: `env.json`
@@ -111,6 +118,24 @@ Produced by the compile phase (LLM + writing-skills TDD); consumed by
   rule instead).
 
 ## State: `<config>/groundhog/`
-- `cache.json` — per-file `{mtime, size, result}`; makes re-runs incremental.
-- `last-run/scan.json`, `last-run/env.json`.
+- `index.db` — the durable SQLite index (WAL). Supersedes `cache.json`; holds
+  mined session data, so it is git-ignored. Tables:
+  - `sessions(path PK, size, mtime, last_offset, prefix_hash, summary_json,
+    last_scanned_at)` — one row per transcript. **Change detection is
+    size-primary** (immune to OneDrive rewriting mtime): unknown path → new;
+    `size==stored && mtime==stored` → skip; `size>stored` → append (resume from
+    `last_offset`); `size==stored && mtime≠` → prefix-hash (first 4 KB + size)
+    tiebreak; `size<stored` → modified. Per-session commit = crash-safe.
+  - `aggregates(kind, signature, sessions, occurrences, steps_saved, proof_json)`
+    — mine-layer rollup, materialised each run.
+  - `verdicts(signature PK, primitive, decision, reason, confidence,
+    evidence_fingerprint, decided_at)` — the verdict ledger. `groundhog remember`
+    folds a `verdict.json` into it (merge, not overwrite); a later scan surfaces a
+    candidate's `prior_verdict` when its signature + `evidence_fingerprint` match.
+  - `meta(key, value)` — e.g. `last_run_epoch` (written only on success).
+  - Corrupt db → renamed `index.db.bak` + rebuilt; a schema bump discards the
+    index and forces one slow full rescan.
+- `cache.json` — legacy per-file `{mtime, size, result}` cache (still used by the
+  importable `scan_transcripts(..., cache=...)` path and `--no-cache` in-memory runs).
+- `last-run/scan.json`, `last-run/env.json`, `shards/`, `finalists.json`.
 - `manifest.json` — what was installed, for incremental re-runs and dedup.

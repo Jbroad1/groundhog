@@ -23,8 +23,8 @@ sys.path.insert(0, str(ROOT / "tests"))
 
 import groundhog_lib as fl            # noqa: E402
 from scrub import scrub_text       # noqa: E402
-from mine_workflows import mine    # noqa: E402
-from make_fixtures import build, PLANTED_SECRET  # noqa: E402
+from mine_workflows import mine, _guard_boost, _guardish  # noqa: E402
+from make_fixtures import build, build_hard_negatives, PLANTED_SECRET  # noqa: E402
 
 
 def _by_kind(scan, kind):
@@ -145,6 +145,27 @@ class ScrubTests(unittest.TestCase):
             out, hits = scrub_text(raw)
             self.assertGreaterEqual(hits, 1, raw)
             self.assertNotIn(secret, out, f"secret survived: {raw!r} -> {out!r}")
+
+    def test_empty_username_dsn_redacted(self):
+        # DSNs with no username (redis/mongo auth) leak the password unless the
+        # url-credentials rule allows an empty user before the ':password@'.
+        for raw, secret in [
+            ("redis://:s3cretpw@localhost:6379", "s3cretpw"),
+            ("mongodb://:topSecret1@db.internal:27017", "topSecret1"),
+        ]:
+            out, hits = scrub_text(raw)
+            self.assertGreaterEqual(hits, 1, raw)
+            self.assertNotIn(secret, out, f"empty-username DSN leaked: {raw!r} -> {out!r}")
+
+    def test_access_key_env_redacted(self):
+        # `*_ACCESS_KEY=<value>` (e.g. AWS) was missed: the keyword list had
+        # `secret`/`secret_key` but not `access_key`, and `secret` isn't adjacent
+        # to the `=`.
+        raw = "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7EXAMPLEKEYvalue123"
+        out, hits = scrub_text(raw)
+        self.assertGreaterEqual(hits, 1)
+        self.assertNotIn("wJalrXUtnFEMIK7EXAMPLEKEYvalue123", out,
+                         f"AWS access key value survived: {out!r}")
 
     def test_keyless_token_is_known_limitation(self):
         # DOCUMENTED LIMITATION: a bare high-entropy token with no keyword and no
@@ -336,6 +357,109 @@ class CacheTests(unittest.TestCase):
         scan_transcripts(cfg, None, cache)
         self.assertNotIn("C:/gone/old-session.jsonl", cache,
                          "cache entry for a deleted transcript was not pruned")
+
+
+class ObjectivityTests(unittest.TestCase):
+    """WS3 hard negatives: the scorer must be domain-agnostic and noise-aware."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.cfg = build_hard_negatives(Path(cls._tmp.name) / "cfg")
+        cls.scan = mine(cls.cfg, since_ms=None, cache={})
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def _seq(self, sig):
+        return _first(_by_kind(self.scan, "tool-sequence"), lambda c: c["signature"] == sig)
+
+    def test_harness_sequence_flagged(self):
+        h = self._seq(["Task", "SendMessage"])
+        self.assertIsNotNone(h, "harness Task->SendMessage sequence not detected")
+        self.assertTrue(h["evidence"].get("harness_noise"), "harness sequence not flagged")
+
+    def test_harness_sequence_not_promoted_to_skill_chain(self):
+        # The old scorer promoted any sequence containing Task/Skill/Agent to a
+        # skill-chain, floating orchestration plumbing to the top. It must not.
+        h = self._seq(["Task", "SendMessage"])
+        self.assertNotEqual(h["recommended_primitive"], "skill-chain",
+                            "harness plumbing was promoted to a skill-chain")
+
+    def test_research_loop_is_not_noise(self):
+        r = self._seq(["WebSearch", "WebFetch", "Read"])
+        self.assertIsNotNone(r, "research WebSearch->WebFetch->Read not detected")
+        self.assertFalse(r["evidence"].get("harness_noise"))
+        self.assertFalse(r["evidence"].get("nav_noise"),
+                         "a research/report loop was wrongly tagged navigation noise")
+        self.assertGreater(r["score"], 0, "research candidate was zeroed out as noise")
+
+    def test_research_outranks_harness(self):
+        # Leverage-forward ranking must float the real research workflow ABOVE the
+        # harness plumbing, even though both recur across 3 sessions.
+        order = {tuple(c["signature"]): i for i, c in enumerate(self.scan["candidates"])}
+        self.assertLess(order[("WebSearch", "WebFetch", "Read")],
+                        order[("Task", "SendMessage")],
+                        "harness noise outranked a real research workflow")
+
+    def test_non_dev_command_reaches_guardrail_tier(self):
+        tf = _first(_by_kind(self.scan, "bash-template"), lambda c: "terraform" in c["title"])
+        self.assertIsNotNone(tf, "terraform plan template not detected")
+        self.assertTrue(tf["evidence"]["guardish"],
+                        "a non-dev command recurring across sessions is not a structural guardrail")
+        self.assertFalse(tf["evidence"]["guard_boosted"],
+                         "terraform carries no dev-CI verb; it must qualify structurally, not by token")
+        self.assertEqual(tf["recommended_primitive"], "hook")
+
+    def test_leverage_field_present(self):
+        for c in self.scan["candidates"]:
+            self.assertEqual(c["leverage"], c["frequency"] * c["steps_saved"])
+            self.assertNotIn("_rank", c, "internal rank scratch leaked into output")
+
+
+class GuardTokenTests(unittest.TestCase):
+    """WS3/QA: dev-CI guard tokens must match as WHOLE WORDS, so a read-only
+    command is not misclassified as a must-fire guardrail hook."""
+
+    def test_guard_boost_is_word_boundary(self):
+        self.assertTrue(_guard_boost("pytest tests/ -q"))
+        self.assertTrue(_guard_boost("npm run build"))
+        # substrings must NOT boost: 'test' in 'latest', 'build' in 'rebuild'
+        self.assertFalse(_guard_boost("git log | grep latest"))
+        self.assertFalse(_guard_boost("git rebuild-index"))
+
+    def test_guardish_structural_vs_boost(self):
+        # structural signal (recurs across sessions) still qualifies any domain
+        self.assertTrue(_guardish("terraform plan", 3))
+        # a read-only command that only happens to contain 'test' as a substring,
+        # seen in ONE session, is NOT a guardrail
+        self.assertFalse(_guardish("git log | grep latest", 1))
+
+
+class GuardrailProofBarTests(unittest.TestCase):
+    """head/tail regression. The bug: a guardrail proposal claimed head/tail
+    'exit 127' in the Bash tool — they work fine, and no proof transcript showed
+    that failure. The rule was invented, not observed. The mitigation is a
+    proof-bar in the rubric + worker instructions that forbids asserting an
+    environment fact the proof does not contain. A deterministic test cannot grade
+    an LLM artifact, so it PINS THE MITIGATION in place (so it can't be silently
+    dropped); the behavioural check is a model-graded eval (see evals.json a13)."""
+
+    def _read(self, rel):
+        return (ROOT / rel).read_text(encoding="utf-8", errors="replace").lower()
+
+    def test_rubric_carries_proof_bar(self):
+        r = self._read("references/scoring-rubric.md")
+        self.assertIn("proof-bar", r)
+        self.assertIn("head`/`tail", r)   # the named regression example (specific, not "overhead")
+        self.assertIn("exit 127", r)
+        self.assertIn("environment fact", r)
+
+    def test_analyzer_worker_carries_proof_bar(self):
+        a = self._read("agents/analyzer.md")
+        self.assertIn("proof-bar", a)
+        self.assertIn("environment fact", a)
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -204,6 +205,137 @@ class PathConfinementTests(unittest.TestCase):
                         "--yes", "--allow-project-root", str(allowed)])
         self.assertTrue((proj / ".claude" / "hookify.okrule.local.md").exists(),
                         "allowed project-scoped rule was not written")
+
+
+class ShardMergeTests(unittest.TestCase):
+    """WS1 map-reduce: `shard` (striped split) and `merge` (cross-shard dedup +
+    rank) are deterministic, testable, and carry no LLM judgment."""
+
+    def _scan(self, n=9):
+        cands = [{"id": f"cand-{i:04d}", "title": f"cand {i}", "signature": [f"t{i}"],
+                  "leverage": (n - i), "score": float(n - i), "kind": "tool-sequence"}
+                 for i in range(1, n + 1)]
+        return {"schema_version": "1", "config_dir": "C:/x/.claude",
+                "env": {"allow_managed_hooks_only": False},
+                "existing_automations": {"skill_names": ["existing-a"]},
+                "candidate_count": n, "candidates": cands}
+
+    def _run(self, argv):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = groundhog.main(argv)
+        return rc, buf.getvalue()
+
+    def _box(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        return Path(d)
+
+    def _scan_file(self, n=9):
+        box = self._box()
+        sp = box / "scan.json"
+        sp.write_text(json.dumps(self._scan(n)), encoding="utf-8")
+        return box, sp
+
+    def test_shard_is_striped_and_covers_topN(self):
+        box, sp = self._scan_file(9)
+        shards = box / "shards"
+        rc, _ = self._run(["shard", "--scan", str(sp), "--n", "3", "--top", "9",
+                           "--out-dir", str(shards)])
+        self.assertEqual(rc, 0)
+        s = [json.loads((shards / f"shard-{i:02d}.json").read_text(encoding="utf-8"))
+             for i in range(3)]
+        # striped, NOT contiguous: shard 0 = 1,4,7 ; 1 = 2,5,8 ; 2 = 3,6,9
+        self.assertEqual([c["id"] for c in s[0]["candidates"]], ["cand-0001", "cand-0004", "cand-0007"])
+        self.assertEqual([c["id"] for c in s[1]["candidates"]], ["cand-0002", "cand-0005", "cand-0008"])
+        self.assertEqual([c["id"] for c in s[2]["candidates"]], ["cand-0003", "cand-0006", "cand-0009"])
+        # each shard carries the dedup baseline + env for the worker
+        self.assertIn("existing-a", s[0]["existing_automations"]["skill_names"])
+        self.assertEqual(s[0]["shard_count"], 3)
+        allids = {c["id"] for sh in s for c in sh["candidates"]}
+        self.assertEqual(allids, {f"cand-{i:04d}" for i in range(1, 10)})
+
+    def test_shard_top_bounds_selection(self):
+        box, sp = self._scan_file(20)
+        shards = box / "shards"
+        self._run(["shard", "--scan", str(sp), "--n", "5", "--top", "10", "--out-dir", str(shards)])
+        allids = set()
+        for i in range(5):
+            sh = json.loads((shards / f"shard-{i:02d}.json").read_text(encoding="utf-8"))
+            allids |= {c["id"] for c in sh["candidates"]}
+        self.assertEqual(allids, {f"cand-{i:04d}" for i in range(1, 11)}, "top-10 not respected")
+
+    def test_shard_deterministic(self):
+        box, sp = self._scan_file(9)
+        self._run(["shard", "--scan", str(sp), "--n", "3", "--top", "9", "--out-dir", str(box / "a")])
+        self._run(["shard", "--scan", str(sp), "--n", "3", "--top", "9", "--out-dir", str(box / "b")])
+        for i in range(3):
+            self.assertEqual((box / "a" / f"shard-{i:02d}.json").read_text(encoding="utf-8"),
+                             (box / "b" / f"shard-{i:02d}.json").read_text(encoding="utf-8"))
+
+    def _write_verdicts(self, shards: Path):
+        shards.mkdir(parents=True, exist_ok=True)
+        (shards / "verdict-shard-00.json").write_text(json.dumps({
+            "shard_index": 0,
+            "proposals": [
+                {"candidate_id": "cand-0001", "title": "Deploy pipeline", "primitive": "skill-chain",
+                 "score": 9.0, "confidence": 0.9, "dedup_key": "deploy-pipeline",
+                 "proof_paths": [{"file": "a.jsonl", "line": 1, "detail": "x"}]},
+                {"candidate_id": "cand-0004", "title": "Run tests guard", "primitive": "hook",
+                 "score": 6.0, "confidence": 0.8, "dedup_key": "run-tests",
+                 "proof_paths": [{"file": "b.jsonl", "line": 2, "detail": "y"}]},
+            ]}), encoding="utf-8")
+        # shard 1 sees the SAME deploy workflow (cross-shard duplicate) + a new one
+        (shards / "verdict-shard-01.json").write_text(json.dumps({
+            "shard_index": 1,
+            "proposals": [
+                {"candidate_id": "cand-0002", "title": "Deploy pipeline (variant)", "primitive": "skill-chain",
+                 "score": 7.0, "confidence": 0.7, "dedup_key": "deploy-pipeline",
+                 "proof_paths": [{"file": "c.jsonl", "line": 3, "detail": "z"}]},
+                {"candidate_id": "cand-0005", "title": "Weekly report", "primitive": "skill",
+                 "score": 8.0, "confidence": 0.85, "dedup_key": "weekly-report",
+                 "proof_paths": [{"file": "d.jsonl", "line": 4, "detail": "w"}]},
+            ]}), encoding="utf-8")
+
+    def test_merge_dedups_ranks_and_limits(self):
+        box = self._box()
+        shards = box / "shards"
+        self._write_verdicts(shards)
+        rc, _ = self._run(["merge", "--shards", str(shards), "--limit", "18"])
+        self.assertEqual(rc, 0)
+        fin = json.loads((box / "finalists.json").read_text(encoding="utf-8"))
+        keys = [f["dedup_key"] for f in fin["finalists"]]
+        self.assertEqual(keys.count("deploy-pipeline"), 1, "cross-shard duplicate not collapsed")
+        self.assertEqual(keys, ["deploy-pipeline", "weekly-report", "run-tests"], "not ranked by score")
+        deploy = fin["finalists"][0]
+        self.assertEqual(deploy["score"], 9.0, "cluster did not keep the strongest representative")
+        self.assertEqual(sorted(deploy["cluster_candidate_ids"]), ["cand-0001", "cand-0002"])
+        self.assertEqual(len(deploy["proof_paths"]), 2, "proofs not unioned across shards")
+
+    def test_merge_limit_caps_finalists(self):
+        box = self._box()
+        shards = box / "shards"
+        self._write_verdicts(shards)
+        self._run(["merge", "--shards", str(shards), "--limit", "2"])
+        fin = json.loads((box / "finalists.json").read_text(encoding="utf-8"))
+        self.assertEqual(fin["finalist_count"], 2)
+
+    def test_merge_deterministic(self):
+        box = self._box()
+        shards = box / "shards"
+        self._write_verdicts(shards)
+        self._run(["merge", "--shards", str(shards), "--out", str(box / "one.json")])
+        self._run(["merge", "--shards", str(shards), "--out", str(box / "two.json")])
+        one = json.loads((box / "one.json").read_text(encoding="utf-8"))
+        two = json.loads((box / "two.json").read_text(encoding="utf-8"))
+        one.pop("generated_at"); two.pop("generated_at")
+        self.assertEqual(json.dumps(one), json.dumps(two))
+
+    def test_merge_no_verdicts_errors_cleanly(self):
+        box = self._box()
+        (box / "shards").mkdir()
+        rc, _ = self._run(["merge", "--shards", str(box / "shards")])
+        self.assertEqual(rc, 1)
 
 
 if __name__ == "__main__":

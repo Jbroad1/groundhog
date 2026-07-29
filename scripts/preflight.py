@@ -27,7 +27,10 @@ import groundhog_lib as fl
 # groundhog runs standalone without any of them.
 _OPTIONAL_SKILLS = [
     "continuous-learning-v2",   # secret-scrub conventions / observations schema
-    "skill-comply",             # extra skill QA if available
+    "skill-comply",             # independent review grader (compile phase)
+    "skill-stocktake",          # independent review grader (compile phase)
+    "skill-creator",            # authoring method (compile phase)
+    "skill-scout",              # dedup / discovery of existing skills
     "writing-skills",           # authoring method (we bundle our own copy too)
     "hookify-rules",            # runtime-read hook rule format
     "automation-audit-ops",     # evidence-first vocabulary
